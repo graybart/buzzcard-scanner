@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside now</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #111418; color: #f2f4f7; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  }
+  .label { font-size: clamp(1rem, 3vw, 1.6rem); letter-spacing: .12em; text-transform: uppercase; color: #8a93a0; }
+  #total { font-size: clamp(5rem, 28vw, 18rem); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; margin: .1em 0; transition: color .4s; }
+  #total.bump { color: #1db954; transition: none; }
+  .sub { margin-top: 2vh; font-size: clamp(.9rem, 2.4vw, 1.3rem); }
+  .sub b { color: #f2f4f7; font-variant-numeric: tabular-nums; }
+  #conn { position: fixed; bottom: 14px; right: 18px; font-size: .85rem; color: #8a93a0; }
+  #conn::before { content: "●"; margin-right: 6px; color: #e05252; }
+  #conn.up::before { color: #1db954; }
+</style>
+</head>
+<body>
+  <div class="label" id="lbl">Inside now</div>
+  <div id="total">–</div>
+  <div class="label sub" id="subw">Total checked in tonight: <b id="all">–</b></div>
+  <div id="conn">Connecting…</div>
+<script>
+const el = document.getElementById('total'), conn = document.getElementById('conn');
+let last = null, t;
+function show(n) {
+  if (last !== null && n > last) { el.classList.add('bump'); clearTimeout(t); t = setTimeout(() => el.classList.remove('bump'), 400); }
+  last = n; el.textContent = n;
+}
+const es = new EventSource('/api/events');
+es.onopen = () => { conn.textContent = 'Live'; conn.className = 'up'; };
+es.onerror = () => { conn.textContent = 'Reconnecting…'; conn.className = ''; };
+es.addEventListener('update', ev => {
+  const d = JSON.parse(ev.data), door = d.mode === 'door';
+  document.getElementById('lbl').textContent = door ? 'Inside now' : 'Checked in';
+  document.getElementById('subw').style.visibility = door ? '' : 'hidden';
+  show(door ? d.inside : d.count);
+  document.getElementById('all').textContent = d.total;
+});
+</script>
+</body>
+</html>

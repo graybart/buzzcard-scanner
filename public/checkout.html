@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#111418">
+<title>Check-out</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #111418; color: #f2f4f7; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    user-select: none; -webkit-user-select: none; touch-action: manipulation;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; font-size: .9rem; color: #8a93a0; }
+  header a { color: #8a93a0; }
+  #conn::before { content: "●"; margin-right: 6px; color: #e05252; }
+  #conn.up::before { color: #1db954; }
+  .stats { display: flex; justify-content: space-around; text-align: center; margin: 3vh 0; }
+  .label { font-size: .85rem; letter-spacing: .1em; text-transform: uppercase; color: #8a93a0; }
+  .n { font-size: clamp(3rem, 16vw, 6rem); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .n.small { font-size: clamp(2rem, 9vw, 3.5rem); color: #c4cad3; }
+  #out {
+    flex: 1; min-height: 200px; width: 100%; border: 0; border-radius: 22px; cursor: pointer;
+    background: #d62828; color: #fff; font: inherit; font-size: clamp(2.2rem, 12vw, 5rem); font-weight: 800;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    box-shadow: 0 6px 0 #8f1717; transition: transform 60ms, box-shadow 60ms;
+  }
+  #out small { font-size: clamp(1rem, 4.5vw, 1.4rem); font-weight: 600; opacity: .9; }
+  #out:active { transform: translateY(5px); box-shadow: 0 1px 0 #8f1717; }
+  #out:disabled { background: #3a3f47; box-shadow: 0 6px 0 #24282e; color: #8a93a0; cursor: default; }
+  #undo {
+    margin-top: 14px; width: 100%; padding: 16px; border-radius: 14px; cursor: pointer;
+    background: transparent; color: #f2f4f7; border: 1px solid #3a3f47; font: inherit; font-size: 1.1rem; font-weight: 600;
+  }
+  #undo:disabled { color: #4b525c; }
+  #msg { text-align: center; min-height: 1.4em; margin-top: 10px; color: #f0b429; font-weight: 600; }
+  body.flash #out { background: #ff4d4d; }
+  #off { text-align: center; color: #8a93a0; font-weight: 600; margin-top: 6px; min-height: 1.4em; }
+</style>
+</head>
+<body>
+  <header><span id="conn">Connecting…</span><a href="/logout">Log out</a></header>
+
+  <div class="stats">
+    <div><div class="label">Inside</div><div class="n" id="inside">–</div></div>
+    <div><div class="label">Left</div><div class="n small" id="exits">–</div></div>
+  </div>
+
+  <button id="out" type="button">−1<small>Tap when someone leaves</small></button>
+  <button id="undo" type="button">Undo last check-out (+1)</button>
+  <div id="msg"></div>
+  <div id="off"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let msgTimer;
+
+function render(d) {
+  $('inside').textContent = d.inside;
+  $('exits').textContent = d.exits;
+  const off = d.mode !== 'door' || !d.session;
+  $('out').disabled = off || d.inside <= 0;
+  $('undo').disabled = off || d.exits <= 0;
+  $('off').textContent = !d.session ? 'No active session' : d.mode !== 'door' ? 'Door counter mode is off' : '';
+}
+function say(text) {
+  $('msg').textContent = text;
+  clearTimeout(msgTimer); msgTimer = setTimeout(() => $('msg').textContent = '', 2500);
+}
+
+async function post(body) {
+  try {
+    const r = await fetch('/api/checkout', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (r.status === 401) { location.href = '/login?next=/checkout'; return; }
+    const d = await r.json();
+    if (d.inside !== undefined) render(d);
+    if (!r.ok) say(d.error || 'Something went wrong');
+    else if (body.undo) say('Undone');
+    else {
+      if (navigator.vibrate) navigator.vibrate(40);
+      document.body.classList.add('flash'); setTimeout(() => document.body.classList.remove('flash'), 150);
+    }
+  } catch { say('Not recorded: server unreachable'); }
+}
+
+$('out').addEventListener('click', () => post({}));
+$('undo').addEventListener('click', () => post({ undo: true }));
+
+const es = new EventSource('/api/events');
+es.onopen = () => { $('conn').textContent = 'Live'; $('conn').className = 'up'; };
+es.onerror = () => { $('conn').textContent = 'Reconnecting…'; $('conn').className = ''; };
+es.addEventListener('update', ev => render(JSON.parse(ev.data)));
+</script>
+</body>
+</html>

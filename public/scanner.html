@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check-in</title>
+<style>
+  :root { --bg:#0f1115; --fg:#f2f3f5; --muted:#8b919c; --card:#191c22; --line:#2a2f38; --accent:#3b82f6; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display:flex; flex-direction:column; }
+  body.door { user-select:none; cursor:default; }
+  .view { display:none; flex:1; flex-direction:column; position:relative; z-index:6; }
+  body.attendance #att, body.door #door { display:flex; }
+
+  #flash { position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .12s; z-index:5; }
+  #flash.on { opacity:1; transition:none; }
+  body.flashing .view, body.flashing .view * { color:#fff !important; }
+
+  header { display:flex; justify-content:space-between; align-items:center; padding:18px 28px; color:var(--muted); font-size:18px; }
+  header b { color:var(--fg); font-weight:600; }
+  .nosession { color:#f59e0b; }
+
+  /* ----- attendance ----- */
+  #count { font-variant-numeric: tabular-nums; }
+  #att main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:0 24px; text-align:center; }
+  #aLabel { font-size:20px; color:var(--muted); letter-spacing:.04em; text-transform:uppercase; }
+  #aLabel.late { font-size:clamp(36px, 6vw, 72px); font-weight:800; color:#f59e0b; letter-spacing:.06em; }
+  #aName { font-size:clamp(48px, 9vw, 120px); font-weight:700; line-height:1.05; min-height:1.1em; word-break:break-word; }
+  #aStatus { font-size:26px; min-height:1.3em; color:var(--muted); }
+  .entry { width:min(640px, 100%); position:relative; margin:0 auto 48px; }
+  #input { width:100%; font-size:24px; padding:16px 20px; border-radius:12px; border:1px solid var(--line); background:var(--card); color:var(--fg); outline:none; }
+  #input:focus { border-color:var(--accent); }
+  #hint { color:var(--muted); font-size:14px; margin-top:8px; text-align:center; }
+  #ac { position:absolute; left:0; right:0; bottom:calc(100% + 6px); background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; display:none; }
+  #ac div { padding:12px 20px; font-size:20px; cursor:pointer; text-align:left; }
+  #ac div.sel, #ac div:hover { background:var(--accent); color:#fff; }
+  #ac mark { background:none; color:inherit; font-weight:700; text-decoration:underline; }
+
+  /* ----- door counter ----- */
+  #door main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding-bottom:6vh; }
+  .label { font-size: 1.4rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  #dLast { font-size: clamp(3rem, 11vw, 9rem); font-weight: 700; font-variant-numeric: tabular-nums; margin: .1em 0; min-height: 1.2em; }
+  #dStatus { font-size: 2rem; font-weight: 600; min-height: 1.3em; }
+  #totalWrap { margin-top: 6vh; display: flex; gap: 10vw; text-align: center; }
+  #total, #inside { font-size: clamp(3rem, 8vw, 6rem); font-weight: 700; font-variant-numeric: tabular-nums; }
+  #nonId {
+    font: inherit; font-size: .95rem; font-weight: 600; padding: 9px 14px; border-radius: 8px; cursor: pointer;
+    background: rgba(255,255,255,.08); color: var(--fg); border: 1px solid rgba(255,255,255,.25);
+  }
+  #nonId:hover { background: rgba(255,255,255,.16); }
+  #nonId kbd { font: inherit; opacity: .7; margin-left: 4px; }
+
+  #conn { position: fixed; bottom: 14px; right: 18px; font-size: .9rem; color: var(--muted); z-index:7; }
+  #conn::before { content: "●"; margin-right: 6px; color: #e05252; }
+  #conn.up::before { color: #1db954; }
+  #start { position:fixed; inset:0; background:rgba(10,12,16,.94); display:flex; align-items:center; justify-content:center; z-index:20; cursor:pointer; font-size:32px; font-weight:600; flex-direction:column; gap:10px; }
+  #start small { font-size:16px; color:var(--muted); font-weight:400; }
+</style>
+</head>
+<body class="attendance">
+<div id="flash"></div>
+<div id="start">Click to start<small>Enables sound and keeps the scanner field focused</small></div>
+
+<!-- ATTENDANCE: roster check-in -->
+<div class="view" id="att">
+  <header>
+    <div class="sess">Loading…</div>
+    <div><b id="count">0</b> checked in</div>
+  </header>
+  <main>
+    <div id="aLabel">Last check-in</div>
+    <div id="aName">—</div>
+    <div id="aStatus">Tap your ID</div>
+  </main>
+  <div class="entry">
+    <div id="ac"></div>
+    <input id="input" autocomplete="off" spellcheck="false" placeholder="Tap your ID, or start typing your name…">
+    <div id="hint">Forgot your ID? Type your name and pick it from the list.</div>
+  </div>
+</div>
+
+<!-- DOOR: tap counter -->
+<div class="view" id="door">
+  <header>
+    <div class="sess">Loading…</div>
+    <button id="nonId" type="button" tabindex="-1">Add Non-ID Scan <kbd>[Enter]</kbd></button>
+  </header>
+  <main>
+    <div class="label">Last scanned</div>
+    <div id="dLast">—</div>
+    <div id="dStatus">&nbsp;</div>
+    <div id="totalWrap">
+      <div><div class="label">Total</div><div id="total">0</div></div>
+      <div><div class="label">Inside</div><div id="inside">0</div></div>
+    </div>
+  </main>
+</div>
+<div id="conn">Connecting…</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const input = $('input'), ac = $('ac');
+let mode = 'attendance', names = [], matches = [], sel = 0, flashTimer;
+
+// ---------- sound (generated, no files) ----------
+let actx;
+function tone(freq, start, dur, type = 'sine', vol = 0.35) {
+  const t = actx.currentTime + start, o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.05);
+}
+const sounds = {
+  ok: () => { tone(1318.5, 0, 0.9); tone(2637, 0, 0.5, 'sine', 0.12); },              // ding
+  duplicate: () => { tone(880, 0, 0.18); tone(880, 0.22, 0.18); },                    // double beep
+  error: () => { tone(160, 0, 0.45, 'square', 0.18); },                               // buzz
+  fastpass: () => [[783.99, 0], [1046.5, 0.09], [1567.98, 0.18]].forEach(([f, at]) => { // rising chime
+    tone(f, at, 0.45, 'triangle', 0.3); tone(f * 2, at, 0.45, 'sine', 0.06);
+  }),
+};
+function play(kind) { if (actx && kind) try { sounds[kind](); } catch {} }
+
+$('start').onclick = () => {
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  actx.resume(); $('start').remove(); focusInput();
+};
+const started = () => !$('start');
+
+function flash(color, ms = 500) {
+  const f = $('flash'); clearTimeout(flashTimer);
+  f.style.background = color; f.classList.add('on'); document.body.classList.add('flashing');
+  flashTimer = setTimeout(() => { f.classList.remove('on'); document.body.classList.remove('flashing'); }, ms);
+}
+
+// ---------- mode switching (live, no reload, so sound stays enabled) ----------
+function setMode(m) {
+  if (m === mode) return;
+  mode = m;
+  document.body.className = m;
+  $('flash').classList.remove('on');
+  // reset both screens so nothing stale shows after a switch
+  $('aName').textContent = '—'; $('aStatus').textContent = 'Tap your ID'; $('aStatus').style.color = '';
+  $('aLabel').textContent = 'Last check-in'; $('aLabel').classList.remove('late');
+  $('dLast').textContent = '—'; $('dStatus').innerHTML = '&nbsp;';
+  input.value = ''; updateAc(); buf = '';
+  if (m === 'attendance') focusInput(); else input.blur();
+}
+
+// =====================================================================
+// ATTENDANCE
+// =====================================================================
+const fmtTime = ts => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function showAtt(r) {
+  const st = $('aStatus'), label = $('aLabel');
+  if (r.count != null) $('count').textContent = r.count;
+  label.textContent = 'Last check-in'; label.classList.remove('late');
+  if (r.status === 'ok' && r.late) {
+    label.textContent = 'Late entry'; label.classList.add('late');
+    $('aName').textContent = r.name; st.textContent = 'Late entry · checked in ' + fmtTime(r.ts); st.style.color = '#f59e0b';
+    flash('#d97706'); play('ok');
+  } else if (r.status === 'ok') {
+    $('aName').textContent = r.name; st.textContent = 'Checked in · ' + fmtTime(r.ts); st.style.color = '#22c55e';
+    flash('#16a34a'); play('ok');
+  } else if (r.status === 'duplicate') {
+    $('aName').textContent = r.name; st.textContent = 'Already checked in at ' + fmtTime(r.ts); st.style.color = '#f59e0b';
+    flash('#d97706'); play('duplicate');
+  } else if (r.status === 'unknown') {
+    st.textContent = 'ID not recognized — see the front desk'; st.style.color = '#ef4444';
+    flash('#dc2626', 700); play('error');
+  } else if (r.status === 'nosession') {
+    st.textContent = 'No active session — start one on the admin page'; st.style.color = '#ef4444';
+    flash('#dc2626', 700); play('error');
+  } else {
+    st.textContent = 'Something went wrong'; st.style.color = '#ef4444'; flash('#dc2626', 700); play('error');
+  }
+}
+
+input.addEventListener('keydown', e => {
+  if (mode !== 'attendance') return;
+  if (e.key === 'ArrowDown' && matches.length) { e.preventDefault(); sel = (sel + 1) % matches.length; renderAc(); return; }
+  if (e.key === 'ArrowUp' && matches.length) { e.preventDefault(); sel = (sel - 1 + matches.length) % matches.length; renderAc(); return; }
+  if (e.key === 'Escape') { input.value = ''; updateAc(); return; }
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const v = input.value;
+  // Scanner output = digits followed by Enter. Also handles a tap mid-way through someone typing a name.
+  const m = v.match(/^(.*?)(\d+)$/);
+  if (m && (m[1].trim() === '' || m[2].length >= 5)) {
+    input.value = m[1]; updateAc();
+    post('/api/scan', { id: m[2] });
+    return;
+  }
+  if (matches.length) { pick(matches[sel]); return; }
+  if (v.trim()) { $('aStatus').textContent = 'Pick your name from the list'; $('aStatus').style.color = '#f59e0b'; play('error'); }
+});
+input.addEventListener('input', updateAc);
+
+function pick(p) { input.value = ''; updateAc(); post('/api/checkin-name', { uid: p.uid }); focusInput(); }
+
+const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+function updateAc() {
+  const q = norm(input.value.trim());
+  if (q.length < 2 || /\d/.test(q)) { matches = []; renderAc(); return; }
+  const terms = q.split(/\s+/);
+  const scored = [];
+  for (const p of names) {
+    const n = norm(p.name), words = n.split(/[\s,.'-]+/);
+    if (!terms.every(t => words.some(w => w.startsWith(t)))) continue; // every term starts some word
+    scored.push([n.startsWith(q) ? 0 : 1, p]);
+  }
+  matches = scored.sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name)).slice(0, 6).map(x => x[1]);
+  sel = 0; renderAc();
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function renderAc() {
+  if (!matches.length) { ac.style.display = 'none'; ac.innerHTML = ''; return; }
+  const terms = norm(input.value.trim()).split(/\s+/);
+  ac.innerHTML = matches.map((p, i) => {
+    const html = p.name.split(/(\s+)/).map(w => {
+      const t = terms.find(t => norm(w).startsWith(t));
+      return t ? '<mark>' + esc(w.slice(0, t.length)) + '</mark>' + esc(w.slice(t.length)) : esc(w);
+    }).join('');
+    return `<div data-i="${i}" class="${i === sel ? 'sel' : ''}">${html}</div>`;
+  }).join('');
+  ac.style.display = 'block';
+}
+ac.addEventListener('mousedown', e => {
+  const d = e.target.closest('[data-i]'); if (!d) return;
+  e.preventDefault(); pick(matches[+d.dataset.i]);
+});
+
+// Keep the field focused in attendance mode so scans are never lost.
+function focusInput() { if (mode === 'attendance' && started()) input.focus(); }
+input.addEventListener('blur', () => setTimeout(focusInput, 0));
+document.addEventListener('click', focusInput);
+
+// =====================================================================
+// DOOR COUNTER: keyboard-wedge capture at the document level
+// =====================================================================
+let buf = '', lastKey = 0;
+document.addEventListener('keydown', e => {
+  if (mode !== 'door') {
+    if (document.activeElement !== input && started()) input.focus(); // attendance: catch stray keys
+    return;
+  }
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const now = Date.now();
+  if (now - lastKey > 2000) buf = '';  // stale partial input
+  lastKey = now;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const id = buf.trim(); buf = '';
+    if (!id) submitDoor(null);          // Enter on its own = non-ID entry
+    else if (!/^\d{9}$/.test(id)) { $('dLast').textContent = id; $('dStatus').textContent = 'Invalid ID (must be 9 digits)'; flash('#d62828'); }
+    else submitDoor(id);
+  } else if (e.key.length === 1) {
+    e.preventDefault();
+    buf += e.key;
+  }
+}, true);
+
+$('nonId').addEventListener('click', e => { e.currentTarget.blur(); submitDoor(null); });
+$('nonId').addEventListener('mousedown', e => e.preventDefault()); // never take keyboard focus
+
+function showDoor(d, id) {
+  if (d.total != null) { $('total').textContent = d.total; $('inside').textContent = d.inside; }
+  if (d.status === 'nosession') {
+    $('dLast').textContent = id === null ? 'Non-ID' : id;
+    $('dStatus').textContent = 'No active session — start one on the admin page';
+    flash('#d62828', 700); play('error'); return;
+  }
+  const s = d.scan;
+  if (s.status === 'nonid') { $('dLast').textContent = 'Non-ID'; flash('#1db954'); play('ok'); $('dStatus').textContent = 'Non-ID entry added'; return; }
+  $('dLast').textContent = s.id;
+  if (s.status === 'accepted')       { flash('#1db954'); play('ok');       $('dStatus').textContent = 'Checked in'; }
+  else if (s.status === 'fastpass')  { flash('#1d6cf2'); play('fastpass'); $('dStatus').textContent = 'Fastpass'; }
+  else if (s.status === 'duplicate') { flash('#e0a800');                   $('dStatus').textContent = 'Welcome back (re-entry)'; }
+  else                               { flash('#d62828');                   $('dStatus').textContent = 'Not allowed'; }
+}
+async function submitDoor(id) {
+  try {
+    const r = await fetch('/api/scan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(id === null ? { nonId: true } : { id }),
+    });
+    const d = await r.json();
+    if (d.mode === 'attendance') { setMode('attendance'); return showAtt(d); } // switched mid-tap
+    if (!r.ok) throw new Error(d.error || 'Error');
+    showDoor(d, id);
+  } catch {
+    $('dLast').textContent = id === null ? 'Non-ID' : id;
+    $('dStatus').textContent = 'Not recorded: server unreachable';
+    flash('#d62828');
+  }
+}
+
+// ---------- shared ----------
+async function post(url, body) {
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (d.mode === 'door') { setMode('door'); if (d.scan || d.status === 'nosession') showDoor(d, body.id); else { $('dStatus').textContent = 'Not recorded — tap again'; } return; }
+    showAtt(d);
+  } catch { showAtt({ status: 'error' }); }
+}
+
+function applyStatus(d) {
+  setMode(d.mode);
+  for (const el of document.querySelectorAll('.sess')) {
+    if (!d.session) { el.innerHTML = '<span class="nosession">No active session</span>'; continue; }
+    el.innerHTML = 'Session: <b></b>';
+    el.querySelector('b').textContent = d.session.name;
+    if (d.mode === 'attendance' && d.session.startTime) el.append(' · starts ' + fmtTime(d.session.startTime));
+  }
+  $('count').textContent = d.count;
+  $('total').textContent = d.total;
+  $('inside').textContent = d.inside;
+}
+async function loadNames() { try { names = await (await fetch('/api/names')).json(); updateAc(); } catch {} }
+
+function connect() {
+  const es = new EventSource('/api/events');
+  es.onopen = () => { $('conn').textContent = 'Connected'; $('conn').className = 'up'; loadNames(); };
+  es.onerror = () => { $('conn').textContent = 'Reconnecting…'; $('conn').className = ''; };
+  es.addEventListener('update', ev => {
+    const d = JSON.parse(ev.data);
+    const sessionChanged = d.type === 'sessions';
+    applyStatus(d);
+    if (d.type === 'roster') loadNames();
+    if (sessionChanged && d.mode === 'door') { $('dLast').textContent = '—'; $('dStatus').innerHTML = '&nbsp;'; }
+  });
+}
+connect();
+</script>
+</body>
+</html>
