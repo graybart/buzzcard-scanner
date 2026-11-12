@@ -16,11 +16,13 @@ function Login() {
         style={{ width: 'min(380px, 100%)', padding: '32px 28px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div>
           <h1 className="headline-s appbar-title" style={{ margin: 0 }}><span className="accent" aria-hidden />Check-in</h1>
-          <p className="body-m muted" style={{ margin: '8px 0 0' }}>Log in to manage sessions, the roster and the door counter.</p>
+          <p className="body-m muted" style={{ margin: '8px 0 0' }}>Log in to manage sessions and the roster.</p>
         </div>
         <input type="hidden" name="next" value={next} />
-        <TextField label="Admin password" name="password" type="password" required autoFocus autoComplete="current-password"
-          support={q.has('error') ? <span style={{ color: 'var(--md-sys-color-error)' }}>That password isn't right. Try again.</span> : undefined} />
+        <TextField label="Username" name="username" required autoFocus={!q.get('user')} autoComplete="username" autoCapitalize="none"
+          defaultValue={q.get('user') ?? undefined} />
+        <TextField label="Password" name="password" type="password" required autoFocus={!!q.get('user')} autoComplete="current-password"
+          support={q.has('error') ? <span style={{ color: 'var(--md-sys-color-error)' }}>That username and password don't match. Try again.</span> : undefined} />
         <Button variant="filled" type="submit" disabled={busy} icon="login">Log in</Button>
         <p className="body-s muted" style={{ margin: 0, textAlign: 'center' }}>Just want the count? <a href="/count">See the live count</a></p>
       </form>

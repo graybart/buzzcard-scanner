@@ -2,13 +2,17 @@
 // Check-in + door counter for keyboard-emulating ID scanners. No external dependencies.
 // Serves the React frontend built from web/ (see PUBLIC_DIR below) plus the JSON API.
 //
-// Every session has a mode, switchable at any time from the admin page:
+// Every session has a type, chosen when it's started:
 //   attendance - roster-based check-in (names, late marking, type-your-name fallback)
 //   door       - anonymous door counter (any 9-digit ID, fastpass/blacklist, inside count)
 //
 // Pages: /          scanner (open)          /count     public live count (open)
 //        /admin     admin (login)           /checkout  exit-door -1 counter (login)
-//        /fastpass  bulk fastpass import (login)
+//        /fastpass  bulk fastpass import (admin login)
+//
+// Accounts: username + password, role "admin" (everything) or "staff" (active session only:
+// add check-ins, see counts, use the exit-door page). The start script's --user/--password
+// adds or updates an admin account; more accounts are managed on the admin page.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -17,11 +21,11 @@ const crypto = require('crypto');
 const PORT = Number(process.env.PORT) || 8080;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-const PASSWORD_FILE = path.join(DATA_DIR, 'password');
-const SECRET_FILE = path.join(DATA_DIR, 'secret');
 // Built frontend (web/dist). The Docker image copies it to ./public; for local runs set PUBLIC_DIR=web/dist.
 const PUBLIC = path.resolve(process.env.PUBLIC_DIR || path.join(__dirname, 'public'));
-const COOKIE = 'checkin_admin';
+const COOKIE = 'checkin_login';
+const LOGIN_DAYS = 30;
+const ROLES = ['admin', 'staff'];
 const MODES = ['attendance', 'door'];
 const ID_RE = /^\d{9}$/;          // door mode: student IDs must be exactly 9 digits
 const NON_ID_LABEL = '(non-ID)';
@@ -32,7 +36,9 @@ const ENTRY_STATUSES = new Set(['accepted', 'fastpass', 'duplicate', 'nonid']);
 // ---------- storage ----------
 fs.mkdirSync(DATA_DIR, { recursive: true });
 let db = {
-  defaultMode: 'attendance', // mode used when no session is active, and for new sessions
+  accounts: {},  // username -> {username, role, salt, hash, createdAt}
+  logins: {},    // sha256(cookie token) -> {username, expires}
+  bootstrapId: null, // last start-script run whose --user/--password was applied
   people: {}, blacklist: [], fastpass: [],
   sessions: [], activeSid: null,
   checkins: {}, // attendance: sid -> [{uid, name, gtid, ts, method}]
@@ -45,6 +51,7 @@ try {
   if (e.code !== 'ENOENT') { console.error('Could not read', DB_FILE, e); process.exit(1); }
 }
 
+delete db.defaultMode; // (older versions had a global mode toggle)
 let byGtid = new Map();
 const reindex = () => { byGtid = new Map(Object.values(db.people).map(p => [p.gtid, p])); };
 reindex();
@@ -64,33 +71,69 @@ catch { console.error(`WARNING: data folder ${DATA_DIR} is not writable - nothin
 const uid = () => crypto.randomBytes(6).toString('hex');
 const normId = s => String(s ?? '').replace(/\s+/g, '');
 const activeSession = () => db.sessions.find(s => s.sid === db.activeSid) || null;
-const currentMode = () => (activeSession() || {}).mode || db.defaultMode;
+// The scanner follows the active session's type; with no active session it shows the attendance screen.
+const currentMode = () => (activeSession() || {}).mode || 'attendance';
 
-// ---------- admin password ----------
-// --password on the start script sets ADMIN_PASSWORD, which is saved in the data volume.
-// Starting without it keeps the last saved password ("admin" on the very first run).
-let ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-if (ADMIN_PASSWORD) {
-  fs.writeFileSync(PASSWORD_FILE, ADMIN_PASSWORD, { mode: 0o600 });
-} else {
-  try { ADMIN_PASSWORD = fs.readFileSync(PASSWORD_FILE, 'utf8'); } catch {}
-  if (!ADMIN_PASSWORD) ADMIN_PASSWORD = 'admin';
+// ---------- accounts and logins ----------
+const USER_RE = /^[a-z0-9._-]{2,32}$/;
+const normUser = u => String(u || '').trim().toLowerCase();
+function hashPassword(pw, salt = crypto.randomBytes(16).toString('hex')) {
+  return { salt, hash: crypto.scryptSync(String(pw), salt, 64).toString('hex') };
 }
-// The login cookie is an HMAC of the password with a random secret kept in the data volume,
-// so logins survive restarts and changing the password logs everyone out.
-let secret;
-try { secret = fs.readFileSync(SECRET_FILE, 'utf8').trim(); } catch {}
-if (!secret) { secret = crypto.randomBytes(32).toString('hex'); fs.writeFileSync(SECRET_FILE, secret, { mode: 0o600 }); }
-const adminToken = crypto.createHmac('sha256', secret).update('admin:' + ADMIN_PASSWORD).digest('hex');
+function checkPassword(acct, pw) {
+  // Hash even when the account doesn't exist so timing doesn't reveal valid usernames.
+  const { hash } = hashPassword(pw, acct ? acct.salt : 'x'.repeat(32));
+  return !!acct && crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(acct.hash, 'hex'));
+}
+function validatePassword(pw) {
+  if (String(pw || '').length < 6) return 'Passwords need at least 6 characters.';
+  return null;
+}
+function setAccount(username, password, role) {
+  const prev = db.accounts[username];
+  db.accounts[username] = { username, role, ...hashPassword(password), createdAt: prev ? prev.createdAt : Date.now() };
+  logoutUser(username); // a new password signs that account out everywhere
+}
+function logoutUser(username) {
+  for (const [k, v] of Object.entries(db.logins)) if (v.username === username) delete db.logins[k];
+}
+const adminCount = () => Object.values(db.accounts).filter(a => a.role === 'admin').length;
+const tokenKey = t => crypto.createHash('sha256').update(t).digest('hex');
 
-function isAdmin(req) {
-  const m = (req.headers.cookie || '').match(new RegExp('(?:^|;\\s*)' + COOKIE + '=([a-f0-9]{64})'));
-  return !!m && crypto.timingSafeEqual(Buffer.from(m[1]), Buffer.from(adminToken));
+// --user/--password from the start script (ADMIN_USER / ADMIN_PASSWORD). Applied once per run of
+// the start script (BOOTSTRAP_ID changes each run), so Docker restarts don't undo password
+// changes made on the Accounts page.
+{
+  const u = normUser(process.env.ADMIN_USER), pw = process.env.ADMIN_PASSWORD || '';
+  const runId = process.env.BOOTSTRAP_ID || (u ? 'manual' : '');
+  if (u || pw) {
+    if (!USER_RE.test(u)) { console.error('ERROR: --user must be 2-32 characters: letters, numbers, . _ -'); process.exit(64); }
+    const bad = validatePassword(pw);
+    if (bad) { console.error('ERROR: ' + bad); process.exit(64); }
+    if (runId !== db.bootstrapId) {
+      const existed = !!db.accounts[u];
+      setAccount(u, pw, 'admin');
+      db.bootstrapId = runId;
+      save();
+      console.log(`Admin account "${u}" ${existed ? 'updated' : 'created'}.`);
+    }
+  }
 }
-function passwordOk(pw) {
-  const a = crypto.createHash('sha256').update(String(pw || '')).digest();
-  const b = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
-  return crypto.timingSafeEqual(a, b);
+if (!Object.keys(db.accounts).length) {
+  console.error('NO_ACCOUNTS: no accounts exist yet. Start with --user NAME --password PASSWORD to create the first admin account.');
+  process.exit(78);
+}
+// Drop expired logins at startup.
+for (const [k, v] of Object.entries(db.logins)) if (v.expires < Date.now()) delete db.logins[k];
+
+const loginToken = req => ((req.headers.cookie || '').match(new RegExp('(?:^|;\\s*)' + COOKIE + '=([a-f0-9]{64})')) || [])[1] || null;
+/** The signed-in account for this request, or null. */
+function currentUser(req) {
+  const t = loginToken(req);
+  if (!t) return null;
+  const login = db.logins[tokenKey(t)];
+  if (!login || login.expires < Date.now()) return null;
+  return db.accounts[login.username] || null;
 }
 const SAFE_NEXT = new Set(['/admin', '/checkout', '/fastpass']);
 
@@ -98,14 +141,14 @@ const SAFE_NEXT = new Set(['/admin', '/checkout', '/fastpass']);
 const isLate = (s, ts) => !!(s.startTime && ts > s.startTime);
 const parseStart = v => (v == null || v === '' ? null : Number(v) || null);
 
-function checkIn(person, method) {
-  const s = activeSession();
+function checkIn(person, method, s = activeSession(), ts = Date.now(), by) {
   if (!s) return { mode: 'attendance', status: 'nosession' };
   if (!person) return { mode: 'attendance', status: 'unknown' };
   const list = (db.checkins[s.sid] ||= []);
   const existing = list.find(c => c.uid === person.uid);
   if (existing) return { mode: 'attendance', status: 'duplicate', name: person.name, ts: existing.ts, count: list.length };
-  const c = { uid: person.uid, name: person.name, gtid: person.gtid, ts: Date.now(), method };
+  const c = { uid: person.uid, name: person.name, gtid: person.gtid, ts, method };
+  if (by) c.by = by;
   list.push(c);
   save();
   broadcast('checkins');
@@ -274,22 +317,31 @@ async function handle(req, res) {
   // --- login ---
   if (m === 'GET' && p === '/login') {
     const next = SAFE_NEXT.has(url.searchParams.get('next')) ? url.searchParams.get('next') : '/admin';
-    if (isAdmin(req)) return redirect(res, next);
+    if (currentUser(req)) return redirect(res, next);
     return serveStatic(res, 'login.html');
   }
   if (m === 'POST' && p === '/login') {
-    const { password, next } = await readBody(req);
+    const { username, password, next } = await readBody(req);
     const to = SAFE_NEXT.has(next) ? next : '/admin';
-    if (!passwordOk(password)) {
+    const acct = db.accounts[normUser(username)];
+    if (!checkPassword(acct, password)) {
       await new Promise(r => setTimeout(r, 600));
-      return redirect(res, `/login?error=1&next=${encodeURIComponent(to)}`);
+      return redirect(res, `/login?error=1&next=${encodeURIComponent(to)}&user=${encodeURIComponent(String(username || ''))}`);
     }
-    return redirect(res, to, `${COOKIE}=${adminToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${60 * 60 * 24 * 30}`);
+    const token = crypto.randomBytes(32).toString('hex');
+    db.logins[tokenKey(token)] = { username: acct.username, expires: Date.now() + LOGIN_DAYS * 864e5 };
+    save();
+    return redirect(res, to, `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${LOGIN_DAYS * 86400}`);
   }
-  if (p === '/logout') return redirect(res, '/login', `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+  if (p === '/logout') {
+    const t = loginToken(req);
+    if (t && db.logins[tokenKey(t)]) { delete db.logins[tokenKey(t)]; save(); }
+    return redirect(res, '/login', `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+  }
 
-  // --- everything below requires the admin password ---
-  if (!isAdmin(req)) {
+  // --- everything below requires a login ---
+  const me = currentUser(req);
+  if (!me) {
     if (m === 'GET' && SAFE_NEXT.has(p)) return redirect(res, `/login?next=${encodeURIComponent(p)}`);
     if (p.startsWith('/api/')) return send(res, 401, { error: 'Login required' });
     return send(res, 404, { error: 'not found' });
@@ -297,17 +349,106 @@ async function handle(req, res) {
 
   if (m === 'GET' && p === '/admin') return serveStatic(res, 'admin.html');
   if (m === 'GET' && p === '/checkout') return serveStatic(res, 'checkout.html');
+  if (m === 'GET' && p === '/api/me') return send(res, 200, { username: me.username, role: me.role });
+
+  // Check-out at the exit door (any account): {} = one person left, {undo:true} = take back the last one
+  if (m === 'POST' && p === '/api/checkout') {
+    const { undo } = await readBody(req);
+    const s = activeSession();
+    if (!s) return send(res, 409, { error: 'No active session', ...publicStatus() });
+    if (s.mode !== 'door') return send(res, 409, { error: 'The active session is an attendance session', ...publicStatus() });
+    const exits = (db.exits[s.sid] ||= []);
+    if (undo) {
+      if (!exits.length) return send(res, 409, { error: 'Nothing to undo', ...publicStatus() });
+      exits.pop();
+    } else {
+      if (doorSummary(s.sid).inside <= 0) return send(res, 409, { error: 'Nobody is inside', ...publicStatus() });
+      exits.push({ at: new Date().toISOString() });
+    }
+    save(); broadcast('checkout');
+    return send(res, 200, publicStatus());
+  }
+
+  // Check-ins of a session, and adding one by name.
+  // Staff: active session only, time is now. Admins: any attendance session, optional time.
+  if (parts[0] === 'api' && parts[1] === 'sessions' && parts[2] && parts[3] === 'checkins' && !parts[4] && (m === 'GET' || m === 'POST')) {
+    const s = db.sessions.find(x => x.sid === parts[2]);
+    if (!s) return send(res, 404, { error: 'no such session' });
+    if (me.role !== 'admin' && s.sid !== db.activeSid) return send(res, 403, { error: 'Only admins can see past sessions' });
+    if (m === 'GET') return send(res, 200, (db.checkins[s.sid] || []).map(c => {
+      const row = { ...c, late: isLate(s, c.ts) };
+      if (me.role !== 'admin') delete row.gtid; // staff see names, not ID numbers
+      return row;
+    }));
+    if (s.mode !== 'attendance') return send(res, 409, { error: 'This is a door counter session' });
+    const body = await readBody(req);
+    let ts = Date.now();
+    if (me.role === 'admin' && body.ts != null && body.ts !== '') {
+      ts = Number(body.ts);
+      if (!Number.isFinite(ts) || ts <= 0) return send(res, 400, { error: 'Invalid time' });
+    }
+    const r = checkIn(db.people[body.uid], 'manual', s, ts, me.username);
+    if (r.status === 'unknown') return send(res, 404, { error: "That person isn't on the roster" });
+    if (r.status === 'duplicate') return send(res, 409, { error: `${r.name} is already checked in (${new Date(r.ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })})` });
+    return send(res, 200, r);
+  }
+
+  // --- everything below is for admins only ---
+  if (me.role !== 'admin') {
+    if (m === 'GET' && p === '/fastpass') return redirect(res, '/admin');
+    return send(res, 403, { error: 'This needs an admin account' });
+  }
+
   if (m === 'GET' && p === '/fastpass') return serveStatic(res, 'fastpass.html');
 
-  // --- mode toggle: changes the active session's mode (and the default for new sessions) ---
-  if (m === 'POST' && p === '/api/mode') {
-    const { mode } = await readBody(req);
-    if (!MODES.includes(mode)) return send(res, 400, { error: 'mode must be attendance or door' });
-    db.defaultMode = mode;
-    const s = activeSession();
-    if (s) s.mode = mode;
-    save(); broadcast('mode');
-    return send(res, 200, publicStatus());
+  // --- accounts ---
+  if (m === 'GET' && p === '/api/accounts') {
+    return send(res, 200, Object.values(db.accounts)
+      .map(a => ({ username: a.username, role: a.role, createdAt: a.createdAt, you: a.username === me.username }))
+      .sort((a, b) => a.username.localeCompare(b.username)));
+  }
+  if (m === 'POST' && p === '/api/accounts') {
+    const { username, password, role } = await readBody(req);
+    const u = normUser(username);
+    if (!USER_RE.test(u)) return send(res, 400, { error: 'Usernames are 2-32 characters: letters, numbers, . _ -' });
+    if (db.accounts[u]) return send(res, 409, { error: `"${u}" already exists` });
+    if (!ROLES.includes(role)) return send(res, 400, { error: 'Role must be admin or staff' });
+    const bad = validatePassword(password);
+    if (bad) return send(res, 400, { error: bad });
+    setAccount(u, password, role);
+    save(); broadcast('accounts');
+    return send(res, 200, { ok: true });
+  }
+  if (parts[0] === 'api' && parts[1] === 'accounts' && parts[2] && !parts[3]) {
+    const a = db.accounts[normUser(decodeURIComponent(parts[2]))];
+    if (!a) return send(res, 404, { error: 'No such account' });
+    if (m === 'PATCH') {
+      const { password, role } = await readBody(req);
+      if (role !== undefined) {
+        if (!ROLES.includes(role)) return send(res, 400, { error: 'Role must be admin or staff' });
+        if (a.role === 'admin' && role !== 'admin' && adminCount() <= 1) return send(res, 409, { error: 'There has to be at least one admin' });
+      }
+      if (password !== undefined) {
+        const bad = validatePassword(password);
+        if (bad) return send(res, 400, { error: bad });
+        Object.assign(a, hashPassword(password));
+        logoutUser(a.username); // signs that account out everywhere...
+        const tok = loginToken(req);
+        if (a.username === me.username && tok) { // ...except here, when you change your own password
+          db.logins[tokenKey(tok)] = { username: a.username, expires: Date.now() + LOGIN_DAYS * 864e5 };
+        }
+      }
+      if (role !== undefined && role !== a.role) { a.role = role; logoutUser(a.username); }
+      save(); broadcast('accounts');
+      return send(res, 200, { ok: true });
+    }
+    if (m === 'DELETE') {
+      if (a.username === me.username) return send(res, 409, { error: "You can't delete the account you're signed in with" });
+      if (a.role === 'admin' && adminCount() <= 1) return send(res, 409, { error: 'There has to be at least one admin' });
+      delete db.accounts[a.username]; logoutUser(a.username);
+      save(); broadcast('accounts');
+      return send(res, 200, { ok: true });
+    }
   }
 
   // --- roster (attendance) ---
@@ -387,34 +528,17 @@ async function handle(req, res) {
     }
   }
 
-  // --- check-out (door): {} = one person left, {undo:true} = take back the last check-out ---
-  if (m === 'POST' && p === '/api/checkout') {
-    const { undo } = await readBody(req);
-    const s = activeSession();
-    if (!s) return send(res, 409, { error: 'No active session', ...publicStatus() });
-    if (s.mode !== 'door') return send(res, 409, { error: 'Door counter mode is off', ...publicStatus() });
-    const exits = (db.exits[s.sid] ||= []);
-    if (undo) {
-      if (!exits.length) return send(res, 409, { error: 'Nothing to undo', ...publicStatus() });
-      exits.pop();
-    } else {
-      if (doorSummary(s.sid).inside <= 0) return send(res, 409, { error: 'Nobody is inside', ...publicStatus() });
-      exits.push({ at: new Date().toISOString() });
-    }
-    save(); broadcast('checkout');
-    return send(res, 200, publicStatus());
-  }
-
   // --- sessions ---
   if (m === 'GET' && p === '/api/sessions') return send(res, 200, sessionList());
   if (m === 'POST' && p === '/api/sessions') {
     const { name, startTime, mode } = await readBody(req);
+    if (!MODES.includes(mode)) return send(res, 400, { error: 'Choose Attendance or Door counter' });
     const s = {
       sid: uid(), name: String(name || '').trim() || new Date().toLocaleString('en-US'),
       createdAt: Date.now(), startTime: parseStart(startTime),
-      mode: MODES.includes(mode) ? mode : db.defaultMode,
+      mode,                               // fixed for the life of the session
     };
-    db.sessions.push(s); db.activeSid = s.sid; db.defaultMode = s.mode;
+    db.sessions.push(s); db.activeSid = s.sid;
     save(); broadcast('sessions');
     return send(res, 200, s);
   }
@@ -426,19 +550,15 @@ async function handle(req, res) {
     const s = db.sessions.find(x => x.sid === parts[2]);
     if (!s) return send(res, 404, { error: 'no such session' });
     if (m === 'POST' && parts[3] === 'activate') {
-      db.activeSid = s.sid; db.defaultMode = s.mode; save(); broadcast('sessions');
+      db.activeSid = s.sid; save(); broadcast('sessions');
       return send(res, 200, { ok: true });
     }
-    if (m === 'PATCH' && !parts[3]) { // edit name, start time, mode
+    if (m === 'PATCH' && !parts[3]) { // edit name, start time (the type can't change)
       const body = await readBody(req);
       if ('startTime' in body) s.startTime = parseStart(body.startTime);
       if (body.name && String(body.name).trim()) s.name = String(body.name).trim();
-      if (MODES.includes(body.mode)) { s.mode = body.mode; if (s.sid === db.activeSid) db.defaultMode = s.mode; }
       save(); broadcast('sessions');
       return send(res, 200, s);
-    }
-    if (m === 'GET' && parts[3] === 'checkins') {
-      return send(res, 200, (db.checkins[s.sid] || []).map(c => ({ ...c, late: isLate(s, c.ts) })));
     }
     if (m === 'DELETE' && parts[3] === 'checkins' && parts[4]) {
       db.checkins[s.sid] = (db.checkins[s.sid] || []).filter(c => c.uid !== parts[4]);

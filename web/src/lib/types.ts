@@ -15,7 +15,7 @@ export interface PublicStatus {
   exits: number;
 }
 export type UpdateType =
-  | 'hello' | 'mode' | 'sessions' | 'checkins' | 'roster' | 'scan' | 'checkout' | 'blacklist' | 'fastpass';
+  | 'hello' | 'sessions' | 'checkins' | 'roster' | 'scan' | 'checkout' | 'blacklist' | 'fastpass' | 'accounts';
 export interface UpdateEvent extends PublicStatus { type: UpdateType }
 
 export interface DoorSummary {
@@ -29,7 +29,13 @@ export interface Session {
 
 export interface Person { uid: string; name: string; gtid: string }
 export interface NameOnly { uid: string; name: string }
-export interface Checkin { uid: string; name: string; gtid: string; ts: number; method: 'scan' | 'typed'; late: boolean }
+/** method: scan = ID tap, typed = name typed at the scanner, manual = added on the admin page (by = account) */
+export interface Checkin { uid: string; name: string; gtid?: string; ts: number; method: 'scan' | 'typed' | 'manual'; by?: string; late: boolean }
+
+export type Role = 'admin' | 'staff';
+export const ROLE_NAME: Record<Role, string> = { admin: 'Admin', staff: 'Door staff' };
+export interface Me { username: string; role: Role }
+export interface Account { username: string; role: Role; createdAt: number; you: boolean }
 
 export type ScanStatus = 'accepted' | 'fastpass' | 'duplicate' | 'blacklisted' | 'nonid';
 export interface Scan { id: string; at: string; status: ScanStatus }

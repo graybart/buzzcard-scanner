@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Button, Checkbox, TextArea, TextField, useConfirm } from '../../ui';
 import type { Person } from '../../lib/types';
-import { act, api, useLoad, type AdminCtx } from './shared';
+import { act, api, PageHead, useLoad, type AdminCtx } from './shared';
 
 const lines = (t: string) => t.replace(/\r/g, '').split('\n');
 function trimTrailing(a: string[]) { while (a.length && !a[a.length - 1].trim()) a.pop(); return a; }
@@ -18,7 +18,7 @@ function parse(namesText: string, idsText: string) {
   return { n, ids };
 }
 
-export function RosterTab({ ticks }: AdminCtx) {
+export function RosterPage({ ticks, go }: AdminCtx) {
   const roster = useLoad<Person[]>('/api/roster', ticks.roster, []);
   const [names, setNames] = React.useState(''); const [ids, setIds] = React.useState('');
   const [replace, setReplace] = React.useState(false);
@@ -53,11 +53,12 @@ export function RosterTab({ ticks }: AdminCtx) {
 
   return (
     <>
+      <PageHead title="Roster" go={go} sub="The people who can check in to attendance sessions." />
       <section className="card">
         <h2 className="title-l card-title">Add people</h2>
         <p className="card-sub body-m muted">
           Copy the Name column from your spreadsheet into the left box and the ID column into the right box, in the same row order.
-          You can also paste both columns into the left box and they'll be split for you. The roster is used in Attendance mode.
+          You can also paste both columns into the left box and they'll be split for you.
         </p>
         <div className="cols">
           <TextArea label={`Names${n.length ? ` (${n.length})` : ''}`} placeholder={'Jane Smith\nJohn Doe'} value={names} onChange={e => setNames(e.target.value)} />

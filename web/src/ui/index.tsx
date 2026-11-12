@@ -10,6 +10,8 @@ import { Checkbox as BaseCheckbox } from '@base-ui/react/checkbox';
 import { RadioGroup } from '@base-ui/react/radio-group';
 import { Radio } from '@base-ui/react/radio';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
+import { Dialog } from '@base-ui/react/dialog';
+import { Menu } from '@base-ui/react/menu';
 import { Toast } from '@base-ui/react/toast';
 import { icons, type IconName } from './icons';
 
@@ -173,6 +175,71 @@ export function Radios<V extends string>({ value, onChange, items, label }: {
 // ---------------------------------------------------------------- Tag (status label)
 export function Tag({ tone, children }: { tone?: 'ok' | 'warn' | 'bad' | 'fastpass' | 'primary'; children: React.ReactNode }) {
   return <span className={cx('tag', tone)}>{children}</span>;
+}
+
+// ---------------------------------------------------------------- Form dialog
+export function FormDialog({ open, onOpenChange, title, children, submitLabel, onSubmit, busy }: {
+  open: boolean; onOpenChange: (o: boolean) => void; title: string; children: React.ReactNode;
+  submitLabel: string; onSubmit: () => void | Promise<void>; busy?: boolean;
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="scrim" />
+        <Dialog.Popup className="dialog form-dialog">
+          <form onSubmit={e => { e.preventDefault(); void onSubmit(); }}>
+            <Dialog.Title className="headline-s">{title}</Dialog.Title>
+            <div className="dialog-body">{children}</div>
+            <div className="actions">
+              <Dialog.Close render={<Button variant="text" type="button">Cancel</Button>} />
+              <Button variant="filled" type="submit" disabled={busy}>{submitLabel}</Button>
+            </div>
+          </form>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+// ---------------------------------------------------------------- Split button + menu (M3 expressive split button)
+export interface MenuEntry { label: string; icon?: IconName; onClick?: () => void; href?: string; danger?: boolean; separatorBefore?: boolean }
+/** With `label`: a filled split button (action + menu). Without: an outlined menu button showing `soloLabel`. */
+export function SplitButton({ label, icon, onClick, menuLabel, items, header, soloLabel }: {
+  label?: string; icon?: IconName; onClick?: () => void; menuLabel: string; items: MenuEntry[]; header?: React.ReactNode; soloLabel?: string;
+}) {
+  return (
+    <div className={cx('split', !label && 'split-solo')}>
+      {label && <Button variant="filled" icon={icon} className="split-lead" onClick={onClick}>{label}</Button>}
+      <Menu.Root>
+        {label
+          ? <Menu.Trigger className="btn btn-filled state split-trail" aria-label={menuLabel} title={menuLabel}>
+              <Icon name="arrow_drop_down" />
+            </Menu.Trigger>
+          : <Menu.Trigger className="btn btn-outlined neutral state split-solo-trigger" aria-label={menuLabel}>
+              {soloLabel}<Icon name="arrow_drop_down" />
+            </Menu.Trigger>}
+        <Menu.Portal>
+          <Menu.Positioner className="menu-positioner" sideOffset={6} align="end">
+            <Menu.Popup className="menu app-menu">
+              {header && <div className="menu-header">{header}</div>}
+              {items.map(it => (
+                <React.Fragment key={it.label}>
+                  {it.separatorBefore && <Menu.Separator className="menu-sep" />}
+                  {it.href
+                    ? <Menu.LinkItem href={it.href} className={cx('menu-item state', it.danger && 'danger')}>
+                        {it.icon ? <Icon name={it.icon} /> : <span />}<span>{it.label}</span>
+                      </Menu.LinkItem>
+                    : <Menu.Item onClick={it.onClick} className={cx('menu-item state', it.danger && 'danger')}>
+                        {it.icon ? <Icon name={it.icon} /> : <span />}<span>{it.label}</span>
+                      </Menu.Item>}
+                </React.Fragment>
+              ))}
+            </Menu.Popup>
+          </Menu.Positioner>
+        </Menu.Portal>
+      </Menu.Root>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------- Confirm dialog (replaces window.confirm)

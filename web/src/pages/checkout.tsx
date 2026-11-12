@@ -29,7 +29,7 @@ function Checkout() {
     } catch { say('Not recorded: server unreachable'); }
   };
 
-  const off = !s?.session ? 'No active session' : s.mode !== 'door' ? 'Door counter mode is off' : '';
+  const off = !s?.session ? 'No active session' : s.mode !== 'door' ? 'The active session is an attendance session' : '';
   return (
     <div className="kiosk" style={{ padding: 'max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))', userSelect: 'none', touchAction: 'manipulation' }}>
       <header className="row" style={{ minHeight: 48 }}>

@@ -95,7 +95,7 @@ function Fastpass() {
     <>
       <header className="appbar">
         <div className="appbar-row">
-          <LinkButton variant="text" icon="arrow_back" href="/admin#door">Admin</LinkButton>
+          <LinkButton variant="text" icon="arrow_back" href="/admin">Admin</LinkButton>
           <h1 className="appbar-title headline-s">Fastpass import</h1>
           <div className="spacer" />
           <span className="body-m muted">{plural(fp.size, 'ID')} on the fastpass list now</span>
