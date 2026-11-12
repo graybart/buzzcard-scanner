@@ -5,7 +5,7 @@ One small web app for keyboard-emulating ID scanners, with two modes you can swi
 - **Attendance:** roster-based check-in. Shows names, marks late arrivals, lets people without their ID type their name, and copies to Google Sheets.
 - **Door counter:** anonymous tap counter. Accepts any 9-digit ID, supports fastpass and blacklist lists, tracks how many people are inside with an exit-door −1 page, and has a public live count.
 
-It's one Node container with no dependencies. Data is kept in the `scanner-data` Docker volume.
+It runs as one Docker container: a small Node server with no dependencies, plus a React frontend built with [Base UI](https://base-ui.com/) and styled to [Material 3](https://m3.material.io/) with the Delta Chi brand colors and type. Data is kept in the `scanner-data` Docker volume.
 
 ## Start and stop
 
@@ -84,6 +84,15 @@ The two modes don't share features. The roster only applies in Attendance mode, 
 - **Fastpass** and **Blacklist** are on the Door counter tab and are kept across sessions. An ID can't be on both.
 - **New door session** (Door counter tab) starts a fresh active door session. The old one stays in the Sessions tab.
 - **Export CSV** downloads the selected session's full door log.
+
+## Frontend
+
+The pages live in `web/` (React + TypeScript, built with Vite). The Docker build compiles them, so you don't need Node installed to run the app.
+
+- **Look:** Material 3 color roles built on the brand palette: red `#ca3d31` is primary, buff `#f1bd19` is the secondary container (the selected mode, tonal buttons, late/repeat flashes), and navy feeds the tertiary colors. Tokens are in `web/src/styles/tokens.css`.
+- **Type:** Bitter for headings (a free stand-in for the brand's Clavo/Chronicle) and Montserrat for everything else (the brand's webfont). Both are bundled, so the app works without internet.
+- **Components:** `web/src/ui/` wraps Base UI parts (Tabs, Select, Toggle Group, Alert Dialog, Toast, Checkbox, Radio, Field) in Material 3 styles. Icons are Material Symbols, copied into `web/src/ui/icons.ts`.
+- **Working on it:** run the server with `PUBLIC_DIR=web/dist node server.js` after `cd web && npm install && npm run build`, or use `npm run dev` in `web/` for hot reload (it proxies the API to port 8080; open `/admin.html`, `/scanner.html` and so on).
 
 ## Notes
 

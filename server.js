@@ -1,5 +1,6 @@
 'use strict';
 // Check-in + door counter for keyboard-emulating ID scanners. No external dependencies.
+// Serves the React frontend built from web/ (see PUBLIC_DIR below) plus the JSON API.
 //
 // Every session has a mode, switchable at any time from the admin page:
 //   attendance - roster-based check-in (names, late marking, type-your-name fallback)
@@ -18,7 +19,8 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PASSWORD_FILE = path.join(DATA_DIR, 'password');
 const SECRET_FILE = path.join(DATA_DIR, 'secret');
-const PUBLIC = path.join(__dirname, 'public');
+// Built frontend (web/dist). The Docker image copies it to ./public; for local runs set PUBLIC_DIR=web/dist.
+const PUBLIC = path.resolve(process.env.PUBLIC_DIR || path.join(__dirname, 'public'));
 const COOKIE = 'checkin_admin';
 const MODES = ['attendance', 'door'];
 const ID_RE = /^\d{9}$/;          // door mode: student IDs must be exactly 9 digits
@@ -210,13 +212,20 @@ function redirect(res, to, cookie) {
   if (cookie) h['Set-Cookie'] = cookie;
   res.writeHead(303, h); res.end();
 }
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
-function serveStatic(res, file) {
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.ico': 'image/x-icon',
+};
+// Pages are re-checked on every load; files in /assets have content hashes in their names, so they can be cached for good.
+function serveStatic(res, file, immutable = false) {
   const p = path.join(PUBLIC, file);
   if (!p.startsWith(PUBLIC + path.sep)) return send(res, 404, { error: 'not found' });
   fs.readFile(p, (err, buf) => {
     if (err) return send(res, 404, { error: 'not found' });
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(p)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(p)] || 'application/octet-stream',
+      'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+    });
     res.end(buf);
   });
 }
@@ -231,6 +240,7 @@ async function handle(req, res) {
   // --- open pages and endpoints (scanner + public count) ---
   if (m === 'GET' && (p === '/' || p === '/scanner')) return serveStatic(res, 'scanner.html');
   if (m === 'GET' && p === '/count') return serveStatic(res, 'count.html');
+  if (m === 'GET' && parts[0] === 'assets' && parts.length === 2) return serveStatic(res, 'assets/' + parts[1], true); // JS, CSS, fonts: no data
   if (m === 'GET' && (p === '/api/status' || p === '/api/count')) return send(res, 200, publicStatus());
 
   if (m === 'GET' && p === '/api/events') {

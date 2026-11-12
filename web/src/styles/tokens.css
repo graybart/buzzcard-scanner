@@ -1,0 +1,141 @@
+/*
+ * Material 3 design tokens for Check-in, built on the Delta Chi brand palette.
+ *   Brand red   #ca3d31  -> primary
+ *   Brand buff  #f1bd19  -> secondary container (selected segments, tonal buttons, "late"/"repeat")
+ *   Brand navy  #11375c  -> tertiary family (fastpass)
+ * Surfaces are warm neutrals rather than M3's default red-tinted ones, so large areas stay calm.
+ * Light theme = admin pages. Dark theme = kiosk screens (scanner, count, exit door).
+ */
+@import '@fontsource-variable/montserrat/wght.css';
+@import '@fontsource-variable/bitter/wght.css';
+
+:root {
+  /* ---- brand ---- */
+  --brand-red: #ca3d31;
+  --brand-buff: #f1bd19;
+  --brand-navy: #11375c;
+
+  /* ---- type ---- */
+  --md-ref-typeface-brand: 'Bitter Variable', 'Rockwell', Georgia, serif;          /* headings (stands in for Clavo/Chronicle) */
+  --md-ref-typeface-plain: 'Montserrat Variable', 'Gotham', 'Segoe UI', sans-serif; /* body (brand's Montserrat webfont) */
+
+  /* ---- shape ---- */
+  --md-sys-shape-xs: 4px;
+  --md-sys-shape-sm: 8px;
+  --md-sys-shape-md: 12px;
+  --md-sys-shape-lg: 16px;
+  --md-sys-shape-xl: 28px;
+  --md-sys-shape-full: 999px;
+
+  /* ---- state layers ---- */
+  --md-sys-state-hover: 0.08;
+  --md-sys-state-focus: 0.10;
+  --md-sys-state-pressed: 0.10;
+  --md-sys-state-disabled-content: 0.38;
+  --md-sys-state-disabled-container: 0.12;
+
+  /* ---- motion ---- */
+  --md-sys-motion-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-emphasized-decel: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-sys-motion-short: 150ms;
+  --md-sys-motion-medium: 250ms;
+
+  /* ---- elevation (shadows used sparingly: menus, dialogs, snackbars) ---- */
+  --md-sys-elevation-1: 0 1px 2px rgb(0 0 0 / 0.30), 0 1px 3px 1px rgb(0 0 0 / 0.15);
+  --md-sys-elevation-2: 0 1px 2px rgb(0 0 0 / 0.30), 0 2px 6px 2px rgb(0 0 0 / 0.15);
+  --md-sys-elevation-3: 0 4px 8px 3px rgb(0 0 0 / 0.15), 0 1px 3px rgb(0 0 0 / 0.30);
+}
+
+/* ---------------- light (admin) ---------------- */
+:root, [data-theme='light'] {
+  color-scheme: light;
+  --md-sys-color-primary: #ca3d31;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #ffdad5;
+  --md-sys-color-on-primary-container: #8f100d;
+  --md-sys-color-inverse-primary: #ffb4a9;
+
+  --md-sys-color-secondary: #765b00;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #f1bd19;
+  --md-sys-color-on-secondary-container: #2a1f00;
+
+  --md-sys-color-tertiary: #3f6088;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #d2e4ff;
+  --md-sys-color-on-tertiary-container: #11375c;
+
+  --md-sys-color-error: #ba1a1a;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-error-container: #ffdad6;
+  --md-sys-color-on-error-container: #93000a;
+
+  /* custom "success" role (M3 extended color) */
+  --md-sys-color-success: #1d7a45;
+  --md-sys-color-success-container: #c8efd3;
+  --md-sys-color-on-success-container: #0a3d1f;
+
+  --md-sys-color-surface: #fbf9f7;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f6f3f1;
+  --md-sys-color-surface-container: #f0edeb;
+  --md-sys-color-surface-container-high: #eae7e5;
+  --md-sys-color-surface-container-highest: #e4e1df;
+  --md-sys-color-on-surface: #1f1b1a;
+  --md-sys-color-on-surface-variant: #534845;
+  --md-sys-color-outline: #857774;
+  --md-sys-color-outline-variant: #d9cdca;
+  --md-sys-color-inverse-surface: #352f2e;
+  --md-sys-color-inverse-on-surface: #f6efed;
+  --md-sys-color-scrim: #000000;
+}
+
+/* ---------------- dark (kiosk screens) ---------------- */
+[data-theme='dark'] {
+  color-scheme: dark;
+  --md-sys-color-primary: #ffb4a9;
+  --md-sys-color-on-primary: #690002;
+  --md-sys-color-primary-container: #ca3d31;
+  --md-sys-color-on-primary-container: #ffffff;
+  --md-sys-color-inverse-primary: #ca3d31;
+
+  --md-sys-color-secondary: #f1bd19;
+  --md-sys-color-on-secondary: #2a1f00;
+  --md-sys-color-secondary-container: #594400;
+  --md-sys-color-on-secondary-container: #ffdf95;
+
+  --md-sys-color-tertiary: #a8c9f6;
+  --md-sys-color-on-tertiary: #002b4f;
+  --md-sys-color-tertiary-container: #26486e;
+  --md-sys-color-on-tertiary-container: #d2e4ff;
+
+  --md-sys-color-error: #ffb4ab;
+  --md-sys-color-on-error: #690005;
+  --md-sys-color-error-container: #93000a;
+  --md-sys-color-on-error-container: #ffdad6;
+
+  --md-sys-color-success: #7fd99a;
+  --md-sys-color-success-container: #005228;
+  --md-sys-color-on-success-container: #c8efd3;
+
+  --md-sys-color-surface: #151312;
+  --md-sys-color-surface-container-lowest: #100e0d;
+  --md-sys-color-surface-container-low: #1d1b1a;
+  --md-sys-color-surface-container: #221f1e;
+  --md-sys-color-surface-container-high: #2c2928;
+  --md-sys-color-surface-container-highest: #373433;
+  --md-sys-color-on-surface: #ede7e5;
+  --md-sys-color-on-surface-variant: #cfc4c1;
+  --md-sys-color-outline: #998e8b;
+  --md-sys-color-outline-variant: #4f4543;
+  --md-sys-color-inverse-surface: #ede7e5;
+  --md-sys-color-inverse-on-surface: #352f2e;
+  --md-sys-color-scrim: #000000;
+
+  /* Scanner flash colors: same meanings as before, tuned to the palette.
+     Each has its own content color so text stays readable on the flash. */
+  --flash-ok: #0f8f4f;        --flash-ok-on: #ffffff;
+  --flash-warn: #f1bd19;      --flash-warn-on: #2a1f00;   /* brand buff: late entry, repeat tap */
+  --flash-bad: #ca3d31;       --flash-bad-on: #ffffff;    /* brand red: rejected */
+  --flash-fastpass: #2367ce;  --flash-fastpass-on: #ffffff;
+}
